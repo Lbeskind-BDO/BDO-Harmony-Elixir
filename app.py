@@ -10,6 +10,8 @@ import subprocess
 import webbrowser
 from PIL import Image, ImageTk
 from kakao_notify import KakaoClient, NotifierMixin
+from sub_recipes import SubRecipeMixin
+from ui_round import RoundFrame, RoundButton, apply_round_tabs
 
 from app_core import (APP_TITLE, CURRENT_VERSION, UpdaterMixin, get_data_dir,
                       acquire_single_instance)
@@ -31,7 +33,7 @@ ICON_DIR = get_resource_path('icons')
 def get_clean_string(text):
     return re.sub(r'[^가-힣a-zA-Z0-9]', '', text)
 
-class HarmonyElixirApp(NotifierMixin, UpdaterMixin):
+class HarmonyElixirApp(NotifierMixin, UpdaterMixin, SubRecipeMixin):
     def __init__(self, root):
         self.root = root
         self.root.geometry("1680x1045") 
@@ -76,7 +78,7 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin):
             "채집 버섯류": ["특상품 혹 버섯", "특상품 광대 버섯", "송로 버섯", "특상품 태고 버섯", "특상품 허풍선이"],
             "채집/노드류": ["야생 들풀", "은빛 철쭉", "화염비늘꽃", "여명초", "어둠의 가루", "붉은 나무혹", "정령의 잎사귀", "화염의 가루", "세월의 가루", "고목나무 껍질", "수도사의 가지", "핏빛 나무 옹이", "자연의 흔적", "그리폰의 발톱"],
             "수액류": ["삼나무 수액", "카프라스나무수액", "소나무 수액", "단풍나무 수액", "측백나무 수액", "자작나무 수액", "물푸레나무 수액", "설원 삼나무 수액", "전나무 수액"],
-            "간이연금": ["마력이 깃든 촉매제", "이벨랍의 정수"]
+            "간이연금": ["마력이 깃든 촉매제", "응축된 마력이 깃든 촉매제", "이벨랍의 정수"]
         }
         
         self.category_cols = {
@@ -119,6 +121,7 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin):
         }
 
         self.variant_recipes = {
+            "일반": {},
             "아인": {
                 "아인 사냥의 비약": ["죄인의 혈액 1", "화살 버섯 4", "블랙스톤 가루 3", "전나무 수액 4"],
                 "의지의 비약": ["순수한가루시약 1", "여명초 4", "늑대 피 6", "정제수 3"]
@@ -150,7 +153,7 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin):
         self.global_materials = {}
         for cat_name, items in self.master_item_catalog.items():
             for item in items:
-                is_checked = bool(self.saved_state.get(item, False))
+                is_checked = bool(self.saved_state.get(item, self.saved_state.get("마력이 깃든 촉매제", False) if item == "응축된 마력이 깃든 촉매제" else False))
                 self.global_materials[item] = {"name": item, "base_qty": 0, "is_done": tk.BooleanVar(value=is_checked)}
 
         self.watermark_label = tk.Label(self.root, text="by 리베스킨트", font=("맑은 고딕", 10, "italic"), bg=self.color_bg, fg="#666666")
@@ -164,22 +167,29 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin):
         style.configure("TNotebook", background=self.color_bg, borderwidth=0)
         style.configure("TNotebook.Tab", background=self.color_panel, foreground=self.color_text, font=("맑은 고딕", 17, "bold"), padding=[35, 18], focuscolor=self.color_bg)
         style.map("TNotebook.Tab", background=[("selected", self.color_border)], foreground=[("selected", self.color_gold)])
+        apply_round_tabs(style, self.color_bg, self.color_panel, self.color_border)
 
         self.notebook = ttk.Notebook(self.root, takefocus=False)
         self.notebook.pack(fill="both", expand=True, padx=15, pady=(15, 5))
         
-        self.tab_checklist = tk.Frame(self.notebook, bg=self.color_bg)
-        self.tab_recipe = tk.Frame(self.notebook, bg=self.color_bg)
+        self.nb_region = tk.Frame(self.notebook, bg=self.color_bg)
+        self.tab_checklist = tk.Frame(self.nb_region, bg=self.color_bg)
+        self.tab_recipe = tk.Frame(self.nb_region, bg=self.color_bg)
+        self.tab_sub = tk.Frame(self.nb_region, bg=self.color_bg)
         
-        self.notebook.add(self.tab_checklist, text="☑ 재료 체크리스트")
-        self.notebook.add(self.tab_recipe, text="📜 영약 & 비약 레시피")
-        self.notebook.select(self.tab_checklist)
+        self._add_tab(self.tab_checklist, text="☑ 재료 체크리스트")
+        self._add_tab(self.tab_recipe, text="📜 영약 & 비약 레시피")
+        self._add_tab(self.tab_sub, text="⚗ 하위 재료 레시피")
+        self.select_tab(self.tab_checklist)
+        self._on_tab_changed()
         self.build_tab_actions()
 
         # 🚨 단 한 번만 UI를 그립니다. (파괴/재생성 X)
         self.setup_checklist_top_bar()
         self.setup_checklist_grid()
         self.setup_recipe_grid()
+        self.setup_sub_tab()
+        self.root.after(1500, self.prewarm_card_images)
 
         self.active_materials = []
         self.change_variant(self.saved_variant)
@@ -227,6 +237,34 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin):
         x = event.x_root - self._click_x
         y = event.y_root - self._click_y
         self.root.geometry(f"+{x}+{y}")
+
+    def save_state_soon(self, delay=250):
+        if getattr(self, "_save_job", None):
+            try: self.root.after_cancel(self._save_job)
+            except Exception: pass
+        def _do():
+            self._save_job = None
+            self.save_state()
+        self._save_job = self.root.after(delay, _do)
+
+    def prewarm_card_images(self):
+        """레시피 카드의 3가지 상태(해제/선택/제외) 둥근 배경 이미지를 미리 만들어 첫 클릭 끊김 제거"""
+        from ui_round import _aa_image
+        ws = list(getattr(self, "recipe_wrappers", {}).values()) + list(getattr(self, "sub_wrappers", {}).values())
+        def step(i=0):
+            if i >= len(ws): return
+            w = ws[i]
+            try:
+                ww, hh = w.winfo_width(), w.winfo_height()
+                pbg = w.master.cget("bg")
+                if hasattr(w, "prewarm"):
+                    w.prewarm([self._card_colors(v) for v in (0, 1, 2)])
+                elif ww > 3 and hh > 3:
+                    for line, fill in ((self.color_panel, self.color_panel), ("#d4af37", "#353229"), ("#111111", "#111111")):
+                        _aa_image(ww, hh, w._r, fill, line, w._lw, pbg)
+            except Exception: pass
+            self.root.after(25, lambda: step(i + 1))
+        step()
 
     def close_app(self):
         self.save_state()
@@ -313,11 +351,11 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin):
         self.variant_selection_frame = tk.Frame(self.root, bg=self.color_bg)
         self.variant_selection_frame.pack(fill="x", padx=15, pady=(15, 0))
 
-        variants = ["아인", "카마실비아", "인간", "에다니아"]
+        variants = ["일반", "아인", "카마실비아", "인간", "에다니아"]
         self.variant_btn_frames = {}
 
         for var in variants:
-            v_frame = tk.Frame(self.variant_selection_frame, bg=self.color_panel, bd=0, highlightthickness=2, highlightbackground=self.color_bg, cursor="hand2")
+            v_frame = RoundFrame(self.variant_selection_frame, bg=self.color_panel, bd=0, highlightthickness=2, highlightbackground=self.color_bg, cursor="hand2")
             v_frame.pack(side="left", expand=True, fill="x", padx=5)
 
             handler = lambda e, v_name=var: self.change_variant(v_name)
@@ -362,6 +400,7 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin):
         # 1. 탭에 맞는 재료 총량 계산
         totals = {item: 0 for cat in self.master_item_catalog.values() for item in cat}
         totals["마력이 깃든 촉매제"] = 8.58
+        totals["응축된 마력이 깃든 촉매제"] = 0.858   # 효율 10배 → 개수 1/10
         totals["이벨랍의 정수"] = 0.143
 
         def map_item_name(name):
@@ -412,7 +451,7 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin):
                     for child in frame.winfo_children():
                         if isinstance(child, tk.Label): child.config(bg=bg_color)
                     
-                    frame.pack(in_=target_col, fill="x")
+                    frame.pack(in_=target_col, fill="x", padx=2, pady=1)
                     visible_index += 1
 
         # 3. 레시피 UI 업데이트 (기타 비약 부분만 재활용)
@@ -423,13 +462,20 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin):
             self.recipe_wrappers[recipe_name].pack_forget()
             
         for recipe_name in all_gita:
-            if recipe_name in active_gita or recipe_name == "의지의 비약":
+            if recipe_name in active_gita:
                 self.recipe_wrappers[recipe_name].pack(fill="x", padx=2, pady=3)
+        # 모든 카드가 숨겨져도(일반) 컨테이너 높이가 이전 값으로 고정되지 않도록 1px 스페이서 유지
+        if not hasattr(self, "_gita_spacer"):
+            self._gita_spacer = tk.Frame(self.recipe_wrappers["의지의 비약"].master, height=1, bg=self.color_panel)
+        self._gita_spacer.pack_forget()
+        self._gita_spacer.pack(fill="x")
 
     def set_app_icon(self):
         target_name = get_clean_string("mainicon") 
         icon_path = None
-        if target_name in self.available_icons: icon_path = self.available_icons[target_name]
+        _mi = os.path.join(ICON_DIR, "main_icon.ico")
+        if os.path.exists(_mi): icon_path = _mi
+        elif target_name in self.available_icons: icon_path = self.available_icons[target_name]
         else:
             for name in ["조화의 영약", "icon"]:
                 clean_name = get_clean_string(name)
@@ -505,7 +551,9 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin):
             "target_count": getattr(self, 'count_var', tk.IntVar(value=5000)).get(),
             "variant": getattr(self, 'current_variant', "에다니아"),
             "notify": getattr(self, 'notify_settings', {}),
-            "timer": getattr(self, 'timer_state', None)
+            "timer": self.timer_get("main"),
+            "timer_sub": self.timer_get("sub"),
+            "sub_target_count": self.sub_count_for_save()
         }
         
         if os.name == 'nt' and os.path.exists(self.save_file):
@@ -557,16 +605,48 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin):
             except: pass
         return None
 
+    # ---- 탭 전환: 내용 프레임을 겹쳐 두고 tkraise 만 수행 (map/unmap 재배치 제거 → 빠르고 잔상 없음) ----
+    def _add_tab(self, frame, text):
+        if not hasattr(self, "_tab_pairs"):
+            self._tab_pairs = []
+            self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+            self.nb_region.grid_rowconfigure(0, weight=1)
+            self.nb_region.grid_columnconfigure(0, weight=1)
+        d = tk.Frame(self.notebook, bg=self.color_bg)
+        self.notebook.add(d, text=text)
+        d.bind("<Configure>", self._nb_place)
+        frame.grid(row=0, column=0, sticky="nsew")
+        self._tab_pairs.append((d, frame))
+
+    def _nb_place(self, e):
+        d = e.widget
+        if d.winfo_width() > 1:
+            self.nb_region.place(x=d.winfo_x(), y=d.winfo_y(), width=d.winfo_width(), height=d.winfo_height())
+            self.nb_region.lift()
+
+    def _on_tab_changed(self, e=None):
+        try:
+            self._tab_pairs[self.notebook.index("current")][1].tkraise()
+        except (tk.TclError, IndexError, AttributeError):
+            pass
+
+    def select_tab(self, frame):
+        for i, (d, f) in enumerate(self._tab_pairs):
+            if f is frame:
+                self.notebook.select(i)
+                f.tkraise()
+                return
+
     def setup_checklist_top_bar(self):
-        self.checklist_top_frame = tk.Frame(self.tab_checklist, pady=18, bg=self.color_panel, bd=1, relief="ridge")
+        self.checklist_top_frame = RoundFrame(self.tab_checklist, pady=18, bg=self.color_panel, bd=1, relief="ridge")
         self.checklist_top_frame.pack(fill="x", padx=10, pady=8)
         
-        self.toggle_btn = tk.Button(self.checklist_top_frame, text="✓ 전체 선택 / 해제", font=("맑은 고딕", 13, "bold"), 
+        self.toggle_btn = RoundButton(self.checklist_top_frame, text="✓ 전체 선택 / 해제", font=("맑은 고딕", 13, "bold"), 
                                     bg=self.color_btn, fg=self.color_gold, activebackground=self.color_border,
                                     activeforeground=self.color_gold, relief="flat", padx=18, pady=5, command=self.toggle_all)
         self.toggle_btn.pack(side="left", padx=25)
 
-        self.update_btn = tk.Button(self.checklist_top_frame, text="↻ 업데이트 확인", font=("맑은 고딕", 12, "bold"), 
+        self.update_btn = RoundButton(self.checklist_top_frame, text="↻ 업데이트 확인", font=("맑은 고딕", 12, "bold"), 
                                     bg="#2980b9", fg="#ffffff", activebackground="#3498db",
                                     activeforeground="#ffffff", relief="flat", padx=15, pady=5, command=self.check_for_updates_thread)
         self.update_btn.pack(side="left", padx=10)
@@ -606,13 +686,13 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin):
         for cat_name, items in self.master_item_catalog.items():
             target_col = self.cols[self.category_cols[cat_name]]
             
-            cat_header = tk.Frame(target_col, bg=self.color_border, pady=6)
+            cat_header = RoundFrame(target_col, bg=self.color_border, pady=6)
             tk.Label(cat_header, text=f"◈ {cat_name}", font=("맑은 고딕", 13, "bold"), fg=self.color_gold, bg=self.color_border).pack(anchor="w", padx=12)
             self.checklist_cat_frames[cat_name] = cat_header
 
             for item in items:
                 mat = self.global_materials[item]
-                item_frame = tk.Frame(target_col, bg=self.color_panel, pady=4, cursor="hand2")
+                item_frame = RoundFrame(target_col, bg=self.color_panel, pady=3, cursor="hand2", radius=9)
                 
                 click_handler = lambda e, m=mat: self.toggle_single_check(m)
                 item_frame.bind("<Button-1>", click_handler)
@@ -640,8 +720,10 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin):
                 lbl_base.bind("<Button-1>", click_handler)
                 
                 lbl_qty = tk.Label(item_frame, text="0", anchor="e", font=("맑은 고딕", 12, "bold"), bg=self.color_panel, fg=self.color_gold, cursor="hand2")
-                lbl_qty.pack(side="right", padx=10)
+                lbl_qty.pack(side="right", padx=10, before=chk_btn)   # 수량이 항상 먼저 자리를 확보 (긴 이름에 잘리지 않게)
                 lbl_qty.bind("<Button-1>", click_handler)
+                if len(mat["name"]) >= 12:
+                    lbl_name.config(font=("맑은 고딕", 10))
                 
                 self.checklist_item_frames[item] = item_frame
                 self.ui_items_dict[item] = {"mat": mat, "lbl_name": lbl_name, "lbl_qty": lbl_qty, "btn_chk": chk_btn, "lbl_base": lbl_base}
@@ -670,12 +752,16 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin):
         }
 
         for main_elixir, sub_dict in all_recipes_master.items():
-            col_frame = tk.Frame(recipe_grid, bg=self.color_panel, bd=1, relief="ridge")
-            col_frame.pack(side="left", fill="both", expand=True, padx=2)
+            col_frame = RoundFrame(recipe_grid, bg=self.color_panel, bd=1, relief="ridge")
+            _ci = getattr(self, "_rg_col", 0)
+            self._rg_col = _ci + 1
+            col_frame.grid(row=0, column=_ci, sticky="nsew", padx=2)   # 6개 열 동일 너비
+            recipe_grid.grid_columnconfigure(_ci, weight=1, uniform="reccol")
+            recipe_grid.grid_rowconfigure(0, weight=1)
             
-            title_f = tk.Frame(col_frame, bg=self.color_border, height=56)
+            title_f = RoundFrame(col_frame, bg=self.color_border, height=56)
             title_f.pack_propagate(False)
-            title_f.pack(fill="x")
+            title_f.pack(fill="x", padx=3, pady=3)
             
             center_f = tk.Frame(title_f, bg=self.color_border)
             center_f.place(relx=0.5, rely=0.5, anchor="center")
@@ -687,122 +773,77 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin):
             tk.Label(center_f, text=main_elixir, font=("맑은 고딕", 14, "bold"), fg=self.color_gold, bg=self.color_border).pack(side="left")
 
             container = tk.Frame(col_frame, bg=self.color_panel)
-            container.pack(fill="both", expand=True)
+            container.pack(fill="both", expand=True, padx=3, pady=(0, 3))
 
             for sub_elixir, ingredients in sub_dict.items():
-                sub_wrapper = tk.Frame(container, bg=self.color_panel, bd=0, highlightthickness=2, highlightbackground=self.color_panel, cursor="hand2")
-                self.recipe_wrappers[sub_elixir] = sub_wrapper
-                if main_elixir != "기타 비약": sub_wrapper.pack(fill="x", padx=2, pady=3)
-
-                sub_f = tk.Frame(sub_wrapper, bg=self.color_panel, pady=4)
-                sub_f.pack(fill="x")
-                
-                sub_title_f = tk.Frame(sub_f, bg=self.color_alt)
-                sub_title_f.pack(fill="x")
-                s_icon = self.load_icon(sub_elixir, size=(28, 28))
-                
-                bg_panel_widgets = [sub_wrapper, sub_f]
-                bg_alt_widgets = [sub_title_f]
-                title_lbls, name_lbls, qty_lbls = [], [], []
-                
-                icon_container = tk.Frame(sub_title_f, bg=self.color_alt, width=28, height=28)
-                icon_container.pack_propagate(False)
-                icon_container.pack(side="left", padx=(6, 6))
-                bg_alt_widgets.append(icon_container)
-
-                if s_icon: 
-                    icon_lbl = tk.Label(icon_container, image=s_icon, bg=self.color_alt)
-                    icon_lbl.pack(expand=True, fill="both")
-                    bg_alt_widgets.append(icon_lbl)
-                else: 
-                    icon_lbl = tk.Label(icon_container, text="▶", fg=self.color_gold, bg=self.color_alt, font=("Arial", 10))
-                    icon_lbl.pack(expand=True, fill="both")
-                    bg_alt_widgets.append(icon_lbl)
-                
-                title_lbl = tk.Label(sub_title_f, text=sub_elixir, font=("맑은 고딕", 12, "bold"), fg=self.color_text, bg=self.color_alt)
-                title_lbl.pack(side="left", pady=3)
-                title_lbls.append(title_lbl)
-                
-                ing_count = 0
+                from recipe_card import RecipeCard
+                card_rows = []
                 for ing in ingredients:
-                    ing_count += 1
                     ing_parts = ing.split()
                     ing_name = " ".join(ing_parts[:-1]).strip()
                     try: ing_base_qty = float(ing_parts[-1])
                     except: ing_base_qty = 1.0
-                    
-                    ing_row = tk.Frame(sub_f, bg=self.color_panel)
-                    ing_row.pack(fill="x", padx=10, pady=1)
-                    bg_panel_widgets.append(ing_row)
-                    
-                    i_icon = self.load_icon(ing_name, size=(22, 22))
-                    i_icon_container = tk.Frame(ing_row, bg=self.color_panel, width=22, height=22)
-                    i_icon_container.pack_propagate(False)
-                    i_icon_container.pack(side="left", padx=3)
-                    bg_panel_widgets.append(i_icon_container)
-
-                    if i_icon: 
-                        i_lbl = tk.Label(i_icon_container, image=i_icon, bg=self.color_panel)
-                        i_lbl.pack(expand=True, fill="both")
-                        bg_panel_widgets.append(i_lbl)
-                    else: 
-                        i_lbl = tk.Label(i_icon_container, text="·", fg="#777777", bg=self.color_panel)
-                        i_lbl.pack(expand=True, fill="both")
-                        bg_panel_widgets.append(i_lbl)
-                    
-                    ing_name_lbl = tk.Label(ing_row, text=ing_name, font=("맑은 고딕", 10), fg="#aaaaaa", bg=self.color_panel, width=14, anchor="w")
-                    ing_name_lbl.pack(side="left", padx=(6, 5))
-                    name_lbls.append(ing_name_lbl)
-                    
-                    display_qty = int(ing_base_qty) if ing_base_qty.is_integer() else ing_base_qty
-                    ing_qty_lbl = tk.Label(ing_row, text=f"{display_qty}", font=("맑은 고딕", 10, "bold"), fg="#888888", bg=self.color_panel)
-                    ing_qty_lbl.pack(side="right", padx=(0, 10)) 
-                    qty_lbls.append(ing_qty_lbl)
-                    
-                    self.recipe_ui_items_list.append({"base_qty": ing_base_qty, "lbl_qty": ing_qty_lbl})
-
-                for _ in range(5 - ing_count):
-                    empty_row = tk.Frame(sub_f, bg=self.color_panel)
-                    empty_row.pack(fill="x", padx=10, pady=1)
-                    bg_panel_widgets.append(empty_row)
-                    
-                    e_icon_container = tk.Frame(empty_row, bg=self.color_panel, width=22, height=22)
-                    e_icon_container.pack_propagate(False)
-                    e_icon_container.pack(side="left", padx=3)
-                    bg_panel_widgets.append(e_icon_container)
-                    
-                    dummy_name = tk.Label(empty_row, text=" ", font=("맑은 고딕", 10), bg=self.color_panel, width=14)
-                    dummy_name.pack(side="left", padx=(6, 5))
-                    bg_panel_widgets.append(dummy_name)
-
-                self.bind_recipe_click(f"{main_elixir}_{sub_elixir}", sub_wrapper, bg_panel_widgets, bg_alt_widgets, title_lbls, name_lbls, qty_lbls)
+                    card_rows.append((self.load_icon(ing_name, size=(22, 22)), ing_name, ing_base_qty))
+                sub_wrapper = RecipeCard(container, self.color_panel, self.color_alt, self.color_text, sub_elixir,
+                                         self.load_icon(sub_elixir, size=(28, 28)), card_rows, n_rows=5,
+                                         gold=self.color_gold)
+                self.recipe_wrappers[sub_elixir] = sub_wrapper
+                if main_elixir != "기타 비약": sub_wrapper.pack(fill="x", padx=2, pady=3)
+                self.recipe_ui_items_list.extend(sub_wrapper.qty_items)
+                self.bind_card(f"{main_elixir}_{sub_elixir}", sub_wrapper)
 
             if main_elixir == "기타 비약":
                 btn_frame = tk.Frame(col_frame, bg=self.color_panel)
-                btn_frame.pack(side="bottom", fill="x", padx=10, pady=15) 
+                btn_frame.pack(side="bottom", fill="x", padx=10, pady=6) 
 
-                reset_btn = tk.Button(btn_frame, text="↺ 레시피 전체 해제", font=("맑은 고딕", 11, "bold"), 
+                reset_btn = RoundButton(btn_frame, text="↺ 레시피 전체 해제", font=("맑은 고딕", 11, "bold"), 
                                       bg=self.color_btn, fg=self.color_gold, activebackground=self.color_border,
                                       relief="flat", pady=6, command=self.reset_recipe_states)
                 reset_btn.pack(fill="x")
                 self.build_timer_controls(col_frame) 
 
-    def bind_recipe_click(self, recipe_key, main_wrapper, bg_panel_widgets, bg_alt_widgets, title_lbls, name_lbls, qty_lbls):
-        state = {"val": self.recipe_states.get(recipe_key, 0)} 
+    def _card_colors(self, val):
+        if val == 0:
+            return (self.color_panel, self.color_panel, self.color_alt, self.color_text, "#aaaaaa", "#888888")
+        if val == 1:
+            return ("#d4af37", "#353229", "#4a4437", "#ffffff", "#e0e0e0", "#ffd700")
+        return ("#111111", "#111111", "#111111", "#444444", "#444444", "#444444")
+
+    def bind_card(self, recipe_key, card):
+        state = {"val": self.recipe_states.get(recipe_key, 0)}
+
         def apply_state(val):
             state["val"] = val
-            self.recipe_states[recipe_key] = val 
-            
+            self.recipe_states[recipe_key] = val
+            card.set_colors(self._card_colors(val))
+
+        def toggle(event):
+            apply_state((state["val"] + 1) % 3)
+            self.save_state_soon()
+
+        card.bind("<Button-1>", toggle)
+        self.recipe_reset_funcs.append(lambda: [apply_state(0), self.save_state()])
+        apply_state(state["val"])
+
+    def bind_recipe_click(self, recipe_key, main_wrapper, bg_panel_widgets, bg_alt_widgets, title_lbls, name_lbls, qty_lbls):
+        state = {"val": self.recipe_states.get(recipe_key, 0)} 
+        cur = {"c": None, "job": None}
+
+        def colors_for(val):
             if val == 0:
-                border_color, panel_bg, alt_bg = self.color_panel, self.color_panel, self.color_alt
-                title_fg, name_fg, qty_fg = self.color_text, "#aaaaaa", "#888888"
-            elif val == 1:
-                border_color, panel_bg, alt_bg = "#d4af37", "#353229", "#4a4437"
-                title_fg, name_fg, qty_fg = "#ffffff", "#e0e0e0", "#ffd700"
-            else:
-                border_color, panel_bg, alt_bg = "#111111", "#111111", "#111111"
-                title_fg, name_fg, qty_fg = "#444444", "#444444", "#444444"
-            
+                return (self.color_panel, self.color_panel, self.color_alt, self.color_text, "#aaaaaa", "#888888")
+            if val == 1:
+                return ("#d4af37", "#353229", "#4a4437", "#ffffff", "#e0e0e0", "#ffd700")
+            return ("#111111", "#111111", "#111111", "#444444", "#444444", "#444444")
+
+        def lerp(a, b, t):
+            a, b = a.lstrip("#"), b.lstrip("#")
+            return "#%02x%02x%02x" % tuple(
+                round(int(a[k:k + 2], 16) + (int(b[k:k + 2], 16) - int(a[k:k + 2], 16)) * t) for k in (0, 2, 4))
+
+        def paint(c):
+            cur["c"] = c
+            border_color, panel_bg, alt_bg, title_fg, name_fg, qty_fg = c
             main_wrapper.config(highlightbackground=border_color)
             for w in bg_panel_widgets:
                 try: w.config(bg=panel_bg)
@@ -814,9 +855,32 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin):
             for lbl in name_lbls: lbl.config(fg=name_fg, bg=panel_bg)
             for lbl in qty_lbls: lbl.config(fg=qty_fg, bg=panel_bg)
 
+        def apply_state(val, animate=False):
+            state["val"] = val
+            self.recipe_states[recipe_key] = val
+            if cur["job"]:
+                try: self.root.after_cancel(cur["job"])
+                except Exception: pass
+                cur["job"] = None
+            tgt = colors_for(val)
+            if not animate or cur["c"] is None:
+                paint(tgt)
+                return
+            src = cur["c"]
+
+            def step(n):
+                try:
+                    paint(tgt if n >= 3 else tuple(lerp(a, b, n / 3.0) for a, b in zip(src, tgt)))
+                except Exception:
+                    paint(tgt)
+                    cur["job"] = None
+                    return
+                cur["job"] = self.root.after(10, lambda: step(n + 1)) if n < 3 else None
+            step(1)   # 색을 3단계로 부드럽게 전환 (깜빡임 대신 페이드)
+
         def toggle_state(event):
-            apply_state((state["val"] + 1) % 3)
-            self.save_state() 
+            apply_state((state["val"] + 1) % 3, True)
+            self.save_state_soon()   # 화면 먼저 갱신, 저장은 잠시 뒤 (끊김 방지)
             
         for w in [main_wrapper] + bg_panel_widgets + bg_alt_widgets + title_lbls + name_lbls + qty_lbls:
             w.bind("<Button-1>", toggle_state)
@@ -827,8 +891,14 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin):
     def reset_recipe_states(self):
         for func in self.recipe_reset_funcs: func()
 
+    LINKED_ITEMS = {"마력이 깃든 촉매제": "응축된 마력이 깃든 촉매제", "응축된 마력이 깃든 촉매제": "마력이 깃든 촉매제"}   # 서로 연동 (선택/어둡게 같이)
+
     def toggle_single_check(self, mat):
-        mat["is_done"].set(not mat["is_done"].get())
+        val = not mat["is_done"].get()
+        mat["is_done"].set(val)
+        other = self.LINKED_ITEMS.get(mat["name"])
+        if other and other in self.global_materials:
+            self.global_materials[other]["is_done"].set(val)
         self.update_progress()
         self.save_state()
 

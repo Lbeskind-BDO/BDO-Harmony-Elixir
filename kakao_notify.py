@@ -252,19 +252,20 @@ class NotifierMixin:
     def notify_init_state(self):
         """load_save_data() 직후 호출: 알림 설정·타이머 상태 로드, 카카오 클라이언트 생성"""
         self.notify_settings = dict(DEFAULT_NOTIFY)
-        self.timer_state = None
+        self.timer_saved = {}
+        self.timers = {}
+        self._sub_count_boot = 5000
         try:
             with open(self.save_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            ns, ts = data.get("notify"), data.get("timer")
+            ns = data.get("notify")
             if isinstance(ns, dict):
                 self.notify_settings.update(ns)
-            if isinstance(ts, dict):
-                self.timer_state = ts
+            self.timer_saved = {"main": data.get("timer"), "sub": data.get("timer_sub")}
+            self._sub_count_boot = int(data.get("sub_target_count", 5000))
         except Exception:
             pass
         self.ui_queue = queue.Queue()
-        self.timer_job = None
         self.login_busy = False
         self.cfg_win = None
         self.kakao = KakaoClient(os.path.dirname(self.save_file))
@@ -277,14 +278,15 @@ class NotifierMixin:
     def notify_start(self):
         """UI 구성이 모두 끝난 뒤 호출"""
         self._poll_ui_queue()
-        self.count_var.trace_add("write", lambda *a: self.refresh_timer_idle())
         self.refresh_login_ui()
         if self.kakao.persist and self.kakao.logged_in():
             threading.Thread(target=self._verify_login, daemon=True).start()
-        if self.timer_state:
-            self.timer_tick()
-        else:
-            self.refresh_timer_idle()
+        for t in self.timers.values():
+            t.start()
+
+    def timer_get(self, key):
+        t = self.timers.get(key)
+        return t.state if t else self.timer_saved.get(key)
 
     def _poll_ui_queue(self):
         try:
@@ -307,14 +309,15 @@ class NotifierMixin:
 
     # ===== 탭 줄 오른쪽 버튼 (알림 설정 / 카카오톡 로그인) =====
     def build_tab_actions(self):
+        from ui_round import RoundButton
         bar = tk.Frame(self.notebook, bg=self.color_bg)
         bar.place(relx=1.0, x=-6, y=12, anchor="ne")
-        self.btn_notify_cfg = tk.Button(
+        self.btn_notify_cfg = RoundButton(
             bar, text="🔔 알림 설정", font=("맑은 고딕", 11, "bold"), bg=self.color_btn, fg=self.color_gold,
             activebackground=self.color_border, activeforeground=self.color_gold,
             relief="flat", padx=14, pady=6, cursor="hand2", command=self.open_notify_settings)
         self.btn_notify_cfg.pack(side="left", padx=(0, 8))
-        self.btn_kakao = tk.Button(
+        self.btn_kakao = RoundButton(
             bar, text="💬 카카오톡 로그인", font=("맑은 고딕", 11, "bold"), bg="#FEE500", fg="#191919",
             activebackground="#F5DC00", activeforeground="#191919",
             relief="flat", padx=14, pady=6, cursor="hand2", command=self.on_kakao_click)
@@ -364,7 +367,7 @@ class NotifierMixin:
         threading.Thread(target=work, daemon=True).start()
 
     # ===== 알림 전송 =====
-    def notify_async(self, text, tag="알림"):
+    def notify_async(self, text, tag="알림", panel=None):
         def work():
             err = None
             for _ in range(3):
@@ -377,146 +380,34 @@ class NotifierMixin:
                     if not self.kakao.logged_in():
                         break
                     time.sleep(5)
-            self.ui_queue.put(lambda: self.on_notify_result(tag, err))
+            self.ui_queue.put(lambda: self.on_notify_result(tag, err, panel))
         threading.Thread(target=work, daemon=True).start()
 
-    def on_notify_result(self, tag, err):
+    def on_notify_result(self, tag, err, panel=None):
         self.refresh_login_ui()
         now = time.strftime("%H:%M:%S")
-        if err:
-            self.notify_status.config(text=f"✖ {tag} 전송 실패 ({now})\n{err}", fg="#e06c6c")
-        else:
-            self.notify_status.config(text=f"✔ {tag} 전송 완료 ({now})", fg="#7fc47f")
+        for p in ([panel] if panel else list(self.timers.values())):
+            if err:
+                p.status.config(text=f"✖ {tag} 전송 실패 ({now})\n{err}", fg="#e06c6c")
+            else:
+                p.status.config(text=f"✔ {tag} 전송 완료 ({now})", fg="#7fc47f")
 
-    # ===== 타이머 UI (레시피 탭 우하단) =====
+    # ===== 타이머/기대값 (영약 탭) =====
     def build_timer_controls(self, parent):
-        box = tk.Frame(parent, bg=self.color_panel, bd=1, relief="ridge")
-        box.pack(side="bottom", fill="x", padx=10, pady=(0, 6))
-        tk.Label(box, text="⏱ 제작 타이머", font=("맑은 고딕", 11, "bold"),
-                 fg=self.color_text, bg=self.color_panel).pack(pady=(8, 0))
-        self.timer_label = tk.Label(box, text="--:--:--", font=("맑은 고딕", 22, "bold"),
-                                    fg=self.color_gold, bg=self.color_panel)
-        self.timer_label.pack()
-        self.timer_info = tk.Label(box, text="", font=("맑은 고딕", 9), fg="#aaaaaa",
-                                   bg=self.color_panel, wraplength=260, justify="center")
-        self.timer_info.pack(pady=(0, 4))
-        row = tk.Frame(box, bg=self.color_panel)
-        row.pack(fill="x", padx=10, pady=(0, 6))
-        self.btn_timer_start = tk.Button(
-            row, text="▶ 시작", font=("맑은 고딕", 11, "bold"), bg="#2e6b3a", fg="#ffffff",
-            activebackground="#3b8a4b", activeforeground="#ffffff", relief="flat", pady=6,
-            cursor="hand2", command=self.timer_start)
-        self.btn_timer_start.pack(side="left", expand=True, fill="x", padx=(0, 4))
-        self.btn_timer_stop = tk.Button(
-            row, text="■ 정지", font=("맑은 고딕", 11, "bold"), bg="#7a2f2f", fg="#ffffff",
-            activebackground="#9a3f3f", activeforeground="#ffffff", relief="flat", pady=6,
-            cursor="hand2", command=self.timer_stop, state="disabled")
-        self.btn_timer_stop.pack(side="left", expand=True, fill="x", padx=(4, 0))
-        self.notify_status = tk.Label(box, text="", font=("맑은 고딕", 9), fg="#aaaaaa",
-                                      bg=self.color_panel, wraplength=260, justify="center")
-        self.notify_status.pack(pady=(0, 8))
+        from craft_timer import CraftTimer
+        from sub_recipes import MAIN_NORMAL_PER_CRAFT, MAIN_HIGH_PER_CRAFT
+
+        def expect(n):
+            return [("일반 조화의 영약", f"{round(n * MAIN_NORMAL_PER_CRAFT):,}개"),
+                    ("고급 조화의 영약", f"{round(n * MAIN_HIGH_PER_CRAFT):,}개")]
+        CraftTimer(self, "main", "조화의 영약", "비약", lambda: self.count_var, self.main_picked_items,
+                   expect, "1000회당 일반 3,300개 · 고급 330개 기준").build(parent)
 
     def _target_count(self):
         try:
             return int(self.count_var.get())
         except (tk.TclError, ValueError):
             return 0
-
-    def refresh_timer_idle(self):
-        if self.timer_state or not hasattr(self, "timer_label"):
-            return
-        count = self._target_count()
-        total = max(0, count) * SECONDS_PER_CRAFT
-        self.timer_label.config(text=fmt_clock(total) if count > 0 else "--:--:--")
-        self.timer_info.config(text=f"목표 {count:,}회 → {fmt_duration(total)}" if count > 0
-                               else "제작 목표 횟수를 입력하세요")
-        self.btn_timer_start.config(state="normal")
-        self.btn_timer_stop.config(state="disabled")
-
-    def refresh_timer_ui(self, rem=None):
-        ts = self.timer_state
-        if not ts:
-            self.refresh_timer_idle()
-            return
-        self.timer_label.config(text=fmt_clock(rem if rem is not None else ts["end_ts"] - time.time()))
-        self.timer_info.config(text=f"진행 중 · 목표 {ts['count']:,}회 ({fmt_duration(ts['total'])})")
-        self.btn_timer_start.config(state="disabled")
-        self.btn_timer_stop.config(state="normal")
-
-    # ===== 타이머 로직 (종료 시각 기준 → 오차 누적 없음, 앱 재시작 시 이어짐) =====
-    def potion_suffix(self, ts=None):
-        names = (ts or self.timer_state or {}).get("potions") or []
-        if not names:
-            return ""
-        s = ", ".join(names[:3]) + (f" 외 {len(names) - 3}" if len(names) > 3 else "")
-        return f"\n비약: {s}"
-
-    def timer_start(self):
-        if self.timer_state:
-            return
-        count = self._target_count()
-        if count <= 0:
-            messagebox.showwarning("타이머", "제작 목표 횟수를 1 이상으로 입력해 주세요.")
-            return
-        if not self.kakao.logged_in():
-            if not messagebox.askyesno("카카오톡 미연결",
-                                       "카카오톡에 로그인되어 있지 않습니다.\n알림 없이 타이머만 시작할까요?"):
-                return
-        total = count * SECONDS_PER_CRAFT
-        picked = [k.split("_", 1)[-1] for k, v in getattr(self, "recipe_states", {}).items() if v == 1]
-        self.timer_state = {"end_ts": time.time() + total, "total": total, "count": count,
-                            "fired": [], "potions": picked}
-        self.notify_status.config(text="")
-        self.save_state()
-        self.timer_tick()
-
-    def timer_tick(self):
-        self.timer_job = None
-        ts = self.timer_state
-        if not ts:
-            self.refresh_timer_ui()
-            return
-        rem = ts["end_ts"] - time.time()
-        if rem <= 0:
-            self.timer_finish()
-            return
-        ns = self.notify_settings
-        if ns.get("notify_before"):
-            for m in ns.get("before_minutes", []):
-                if m in ts["fired"] or m * 60 >= ts["total"]:
-                    continue
-                if rem <= m * 60:
-                    ts["fired"].append(m)
-                    if rem >= m * 60 - GRACE_SEC:
-                        self.notify_async(
-                            f"⏰ 조화의 영약 제작 종료 {m}분 전입니다.\n남은 시간: {fmt_duration(rem)}"
-                            f"\n목표 {ts['count']:,}회{self.potion_suffix(ts)}", "종료 전 알림")
-                    self.save_state()
-        self.refresh_timer_ui(rem)
-        self.timer_job = self.root.after(500, self.timer_tick)
-
-    def timer_finish(self):
-        ts = self.timer_state
-        late = time.time() - ts["end_ts"]
-        if self.notify_settings.get("notify_end"):
-            msg = (f"✅ 조화의 영약 제작 완료!\n목표 {ts['count']:,}회 ({fmt_duration(ts['total'])}) "
-                   f"시간이 끝났습니다.{self.potion_suffix(ts)}")
-            if late > 60:
-                msg += f"\n(앱이 꺼져 있어 {fmt_duration(late)} 늦게 알림)"
-            self.notify_async(msg, "종료 알림")
-        self.timer_state = None
-        self.save_state()
-        self.refresh_timer_idle()
-        self.timer_info.config(text="타이머 종료 ✔")
-
-    def timer_stop(self):
-        if self.timer_job:
-            self.root.after_cancel(self.timer_job)
-            self.timer_job = None
-        self.timer_state = None
-        self.save_state()
-        self.refresh_timer_idle()
-        self.timer_info.config(text="정지됨")
 
     # ===== 알림 설정 창 =====
     def open_notify_settings(self):

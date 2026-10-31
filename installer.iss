@@ -38,11 +38,12 @@ Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
+Source: "icons\app_icon.ico"; DestDir: "{app}"; DestName: "HarmonyElixir_main.ico"; Flags: ignoreversion
 Source: "dist\HarmonyElixirRecipe\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\HarmonyElixir_main.ico"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\HarmonyElixir_main.ico"; Tasks: desktopicon
 
 [Run]
 ; 일반 설치: 마지막 화면의 '실행' 체크박스 / 자동 업데이트(silent): 설치 후 바로 재실행

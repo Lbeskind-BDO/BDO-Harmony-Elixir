@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """앱 공통: 버전/경로, 단일 실행, GitHub Releases 기반 자동 업데이트 (app.py 에서 import)"""
 import ctypes
 import hashlib
