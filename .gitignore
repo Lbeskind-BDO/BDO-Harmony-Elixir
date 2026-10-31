@@ -1,0 +1,9 @@
+build/
+dist/
+installer_output/
+__pycache__/
+*.pyc
+*.bak*
+elixir_save.json
+kakao_token.json
+kakao_config.py
