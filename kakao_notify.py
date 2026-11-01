@@ -24,7 +24,7 @@ except ImportError:
 KAKAO_REDIRECT_PORT = 8765   # Redirect URI: http://localhost:8765/callback 으로 등록
 KAKAO_REDIRECT_URI = f"http://localhost:{KAKAO_REDIRECT_PORT}/callback"
 
-SECONDS_PER_CRAFT = 1        # 1회 제작당 1초
+SECONDS_PER_CRAFT = 1.13     # 1회 제작당 실제 소요 시간(초) - 인게임 표기는 1초, 5000회 = 1시간 34분 10초
 GRACE_SEC = 120              # 절전/종료 등으로 늦은 '종료 N분 전' 알림은 이 시간 넘으면 생략
 
 DEFAULT_NOTIFY = {
@@ -401,7 +401,7 @@ class NotifierMixin:
             return [("일반 조화의 영약", f"{round(n * MAIN_NORMAL_PER_CRAFT):,}개"),
                     ("고급 조화의 영약", f"{round(n * MAIN_HIGH_PER_CRAFT):,}개")]
         CraftTimer(self, "main", "조화의 영약", "비약", lambda: self.count_var, self.main_picked_items,
-                   expect, "1000회당 일반 3,300개 · 고급 330개 기준").build(parent)
+                   expect, "1000회당 일반 3,420개 · 고급 290개 기준\n1회 실제 소요 약 1.13초 (인게임 표기는 1초)").build(parent)
 
     def _target_count(self):
         try:
