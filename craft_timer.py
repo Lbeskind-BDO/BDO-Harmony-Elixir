@@ -51,7 +51,7 @@ class CraftTimer:
         self.btn_start = RoundButton(
             row, text="▶ 시작", font=("맑은 고딕", 11, "bold"), bg="#2e6b3a", fg="#ffffff",
             activebackground="#3b8a4b", activeforeground="#ffffff", relief="flat", pady=4,
-            cursor="hand2", command=self.begin)
+            cursor="hand2", command=self.on_main_btn)
         self.btn_start.pack(side="left", expand=True, fill="x", padx=(0, 4))
         self.btn_stop = RoundButton(
             row, text="■ 정지", font=("맑은 고딕", 11, "bold"), bg="#7a2f2f", fg="#ffffff",
@@ -90,8 +90,25 @@ class CraftTimer:
         total = max(0, n) * SECONDS_PER_CRAFT
         self.label.config(text=fmt_clock(total) if n > 0 else "--:--:--")
         self.info.config(text=f"목표 {n:,}회 → {fmt_duration(total)}" if n > 0 else "제작 목표 횟수를 입력하세요")
-        self.btn_start.config(state="normal")
+        self.set_main_btn("start")
         self.btn_stop.config(state="disabled")
+
+    def set_main_btn(self, mode):
+        if mode == "pause":
+            self.btn_start.config(text="⏸ 일시정지", bg="#8a6d1f", activebackground="#a6842a", state="normal")
+        elif mode == "resume":
+            self.btn_start.config(text="▶ 재개", bg="#2e6b3a", activebackground="#3b8a4b", state="normal")
+        else:
+            self.btn_start.config(text="▶ 시작", bg="#2e6b3a", activebackground="#3b8a4b", state="normal")
+
+    def on_main_btn(self):
+        s = self.state
+        if not s:
+            self.begin()
+        elif s.get("paused"):
+            self.resume()
+        else:
+            self.pause()
 
     def refresh_ui(self, rem=None):
         s = self.state
@@ -99,9 +116,14 @@ class CraftTimer:
             self.refresh_idle()
             return
         self.refresh_expect()
-        self.label.config(text=fmt_clock(rem if rem is not None else s["end_ts"] - time.time()))
-        self.info.config(text=f"진행 중 · 목표 {s['count']:,}회 ({fmt_duration(s['total'])})")
-        self.btn_start.config(state="disabled")
+        if s.get("paused"):
+            self.label.config(text=fmt_clock(s.get("rem", 0)))
+            self.info.config(text=f"⏸ 일시정지 · 목표 {s['count']:,}회 ({fmt_duration(s['total'])})")
+            self.set_main_btn("resume")
+        else:
+            self.label.config(text=fmt_clock(rem if rem is not None else s["end_ts"] - time.time()))
+            self.info.config(text=f"진행 중 · 목표 {s['count']:,}회 ({fmt_duration(s['total'])})")
+            self.set_main_btn("pause")
         self.btn_stop.config(state="normal")
 
     def suffix(self, s=None):
@@ -138,6 +160,9 @@ class CraftTimer:
         if not s:
             self.refresh_ui()
             return
+        if s.get("paused"):
+            self.refresh_ui()
+            return
         rem = s["end_ts"] - time.time()
         if rem <= 0:
             self.finish()
@@ -171,6 +196,28 @@ class CraftTimer:
         a.save_state()
         self.refresh_idle()
         self.info.config(text="타이머 종료 ✔")
+
+    def pause(self):
+        s = self.state
+        if not s or s.get("paused"):
+            return
+        if self.job:
+            self.app.root.after_cancel(self.job)
+            self.job = None
+        s["rem"] = max(0.0, s["end_ts"] - time.time())
+        s["paused"] = True
+        self.app.save_state()
+        self.refresh_ui()
+
+    def resume(self):
+        s = self.state
+        if not s or not s.get("paused"):
+            return
+        s["end_ts"] = time.time() + s.get("rem", 0)
+        s["paused"] = False
+        s.pop("rem", None)
+        self.app.save_state()
+        self.tick()
 
     def stop(self):
         if self.job:
