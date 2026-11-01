@@ -93,7 +93,7 @@ class SubRecipeMixin:
             return [("예상 획득량", f"{lo:,} ~ {hi:,}개")]
         CraftTimer(self, "sub", "하위 재료", "제작 품목",
                    lambda: self.sub_count_var, self.sub_picked_items, expect,
-                   "1회 제작당 약 3 ~ 3.3개 (제작 목표 × 3.0 ~ 3.3)\n1회 실제 소요 약 1.13초 (인게임 표기는 1초)").build(ctrl)
+                   "1회 제작당 약 3 ~ 3.3개 (제작 목표 × 3.0 ~ 3.3)\n1회 실제 소요 약 1.12초 (인게임 표기는 1초)").build(ctrl)
 
         self.sub_count_var.trace_add("write", lambda *a: self.update_sub_quantities())
         self.update_sub_quantities()
