@@ -774,11 +774,23 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin, SubRecipeMixin):
 
             if main_elixir != "기타 비약":
                 # 하단 복사 칸: 클릭하면 '분노;광란;집중;파괴' 형태로 클립보드에 복사
-                _txt = ";".join(n.replace("의 비약", "") for n in sub_dict.keys())
+                _txt = ";".join(n.replace("의 비약", "") for n in sub_dict.keys()) + ";깃든 촉매"
                 _cp = RoundButton(col_frame, text=_txt, font=("맑은 고딕", 10, "bold"), bg=self.color_alt,
                                   fg=self.color_text, activebackground=self.color_border,
                                   activeforeground=self.color_gold, relief="flat", pady=5, cursor="hand2")
+                _cp.config(width=10)   # 글자 길이 때문에 열이 넓어지지 않게
                 _cp.pack(side="bottom", fill="x", padx=10, pady=(2, 6))
+                def _fit(e, b=_cp, t=_txt):
+                    import tkinter.font as _tkf
+                    avail = e.width - 20
+                    fnt = ("맑은 고딕", 7, "bold")
+                    for sz in (10, 9, 8, 7):
+                        fnt = ("맑은 고딕", sz, "bold")
+                        if _tkf.Font(font=fnt).measure(t) <= avail:
+                            break
+                    if b._font != fnt:
+                        b.config(font=fnt)
+                _cp.bind("<Configure>", _fit, add="+")
                 def _do_copy(b=_cp, t=_txt):
                     self.root.clipboard_clear()
                     self.root.clipboard_append(t)
