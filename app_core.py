@@ -15,7 +15,7 @@ from tkinter import messagebox
 import requests
 
 APP_TITLE = "조화의영약_4종 레시피"
-CURRENT_VERSION = "3.0.2"
+CURRENT_VERSION = "3.0.3"
 GITHUB_REPO = "Lbeskind-BDO/BDO-Harmony-Elixir"      # 업데이트를 확인할 GitHub 저장소
 INSTALLER_ASSET = "HarmonyElixirSetup.exe"            # 릴리스에 올리는 설치 파일 이름
 MUTEX_NAME = "HarmonyElixirRecipe_SingleInstance"     # installer.iss 의 AppMutex 와 동일해야 함

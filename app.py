@@ -772,6 +772,21 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin, SubRecipeMixin):
             if m_icon: tk.Label(center_f, image=m_icon, bg=self.color_border).pack(side="left", padx=(0, 6))
             tk.Label(center_f, text=main_elixir, font=("맑은 고딕", 14, "bold"), fg=self.color_gold, bg=self.color_border).pack(side="left")
 
+            if main_elixir != "기타 비약":
+                # 하단 복사 칸: 클릭하면 '분노;광란;집중;파괴' 형태로 클립보드에 복사
+                _txt = ";".join(n.replace("의 비약", "") for n in sub_dict.keys())
+                _cp = RoundButton(col_frame, text=_txt, font=("맑은 고딕", 10, "bold"), bg=self.color_alt,
+                                  fg=self.color_text, activebackground=self.color_border,
+                                  activeforeground=self.color_gold, relief="flat", pady=5, cursor="hand2")
+                _cp.pack(side="bottom", fill="x", padx=10, pady=(2, 6))
+                def _do_copy(b=_cp, t=_txt):
+                    self.root.clipboard_clear()
+                    self.root.clipboard_append(t)
+                    self.root.update()
+                    b.config(text="✔ 복사되었습니다")
+                    self.root.after(1000, lambda: b.config(text=t))
+                _cp.config(command=_do_copy)
+
             container = tk.Frame(col_frame, bg=self.color_panel)
             container.pack(fill="both", expand=True, padx=3, pady=(0, 3))
 
