@@ -322,6 +322,11 @@ class NotifierMixin:
             activebackground="#F5DC00", activeforeground="#191919",
             relief="flat", padx=14, pady=6, cursor="hand2", command=self.on_kakao_click)
         self.btn_kakao.pack(side="left")
+        self.btn_hz = RoundButton(
+            bar, text="📱 모바일 연동", font=("맑은 고딕", 11, "bold"), bg="#2f4f6f", fg="#ffffff",
+            activebackground="#3b6794", activeforeground="#ffffff",
+            relief="flat", padx=14, pady=6, cursor="hand2", command=self.on_hz_click)
+        self.btn_hz.pack(side="left", padx=(8, 0))
         bar.lift()
 
     def refresh_login_ui(self):

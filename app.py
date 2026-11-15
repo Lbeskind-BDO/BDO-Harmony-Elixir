@@ -11,6 +11,7 @@ import webbrowser
 from PIL import Image, ImageTk
 from kakao_notify import KakaoClient, NotifierMixin
 from sub_recipes import SubRecipeMixin
+from hz_sync import HzSyncMixin
 from ui_round import RoundFrame, RoundButton, apply_round_tabs
 
 from app_core import (APP_TITLE, CURRENT_VERSION, UpdaterMixin, get_data_dir,
@@ -33,7 +34,7 @@ ICON_DIR = get_resource_path('icons')
 def get_clean_string(text):
     return re.sub(r'[^가-힣a-zA-Z0-9]', '', text)
 
-class HarmonyElixirApp(NotifierMixin, UpdaterMixin, SubRecipeMixin):
+class HarmonyElixirApp(NotifierMixin, UpdaterMixin, SubRecipeMixin, HzSyncMixin):
     def __init__(self, root):
         self.root = root
         self.root.geometry("1680x1045") 
@@ -146,6 +147,7 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin, SubRecipeMixin):
         self.preload_all_icons()
         self.set_app_icon()
 
+        self.recipe_apply = {}   # 레시피 카드 상태 적용 함수 (모바일 연동용)
         self.load_save_data()
         self.notify_init_state()
         
@@ -194,6 +196,7 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin, SubRecipeMixin):
         self.active_materials = []
         self.change_variant(self.saved_variant)
         self.notify_start()
+        self.hz_start()
 
     def setup_custom_titlebar(self):
         self.root.overrideredirect(True) 
@@ -566,6 +569,8 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin, SubRecipeMixin):
             with open(self.save_file, 'w', encoding='utf-8') as f:
                 json.dump(state_to_save, f, ensure_ascii=False, indent=4)
         except Exception: pass 
+        try: self.hz_push()   # 모바일 연동: 변경분 전송
+        except Exception: pass
 
     def load_icon(self, name, size=(28, 28)):
         cache_key = name + str(size)
@@ -850,6 +855,7 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin, SubRecipeMixin):
 
         card.bind("<Button-1>", toggle)
         self.recipe_reset_funcs.append(lambda: [apply_state(0), self.save_state()])
+        self.recipe_apply[recipe_key] = apply_state
         apply_state(state["val"])
 
     def bind_recipe_click(self, recipe_key, main_wrapper, bg_panel_widgets, bg_alt_widgets, title_lbls, name_lbls, qty_lbls):
@@ -913,6 +919,7 @@ class HarmonyElixirApp(NotifierMixin, UpdaterMixin, SubRecipeMixin):
             w.bind("<Button-1>", toggle_state)
             
         self.recipe_reset_funcs.append(lambda: [apply_state(0), self.save_state()])
+        self.recipe_apply[recipe_key] = lambda v: apply_state(v, True)
         apply_state(state["val"])
 
     def reset_recipe_states(self):

@@ -7,3 +7,4 @@ __pycache__/
 elixir_save.json
 kakao_token.json
 kakao_config.py
+hz_token.json

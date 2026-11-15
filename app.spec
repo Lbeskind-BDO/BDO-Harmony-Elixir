@@ -1,12 +1,12 @@
 ﻿# -*- mode: python ; coding: utf-8 -*-
-# onedir 鍮뚮뱶 (installer.iss 媛 dist\HarmonyElixirRecipe ?대뜑瑜??ㅼ튂 ?뚯씪濡?臾띠쓬)
+# onedir 빌드 (installer.iss 가 dist\HarmonyElixirRecipe 폴더를 설치 파일로 묶음)
 
 a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=[],
     datas=[('icons', 'icons')],
-    hiddenimports=[],
+    hiddenimports=['websocket'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
